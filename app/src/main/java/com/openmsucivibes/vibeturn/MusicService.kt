@@ -28,11 +28,11 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.media.app.NotificationCompat as MediaNotificationCompat
-import com.google.android.exoplayer2.C
-import com.google.android.exoplayer2.ExoPlayer
-import com.google.android.exoplayer2.MediaItem
-import com.google.android.exoplayer2.MediaMetadata
-import com.google.android.exoplayer2.audio.AudioAttributes as ExoAudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.AudioAttributes as ExoAudioAttributes
+import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.*
 import java.io.IOException
 import java.io.InputStream
