@@ -145,6 +145,39 @@ class WebAppInterface(private val context: Context, private val webView: WebView
     }
 
     /**
+     * LLAMADO DESDE JAVASCRIPT: Inicia la reproducción de un flujo de audio a partir de una URL. La página
+     * web debe llamar a esta función cuando desee que Android reproduzca un audio externo utilizando
+     * ExoPlayer directamente. Esta llamada evita el flujo habitual de notificación de canción y
+     * metadatos y reproduce la URL proporcionada. Si el parámetro es nulo o vacío no hace nada.
+     *
+     * @param audioUrl La URL del audio a reproducir.
+     */
+    @JavascriptInterface
+    fun playStream(audioUrl: String?) {
+        Log.i(TAG, "playStream called from JS. url=$audioUrl")
+        if (audioUrl.isNullOrEmpty()) {
+            Log.w(TAG, "playStream: Received empty or null URL. Ignoring call.")
+            return
+        }
+        mainHandler.post {
+            val intent = Intent(context, MusicService::class.java).apply {
+                action = MusicService.ACTION_PLAY_STREAM
+                putExtra(MusicService.EXTRA_STREAM_URL, audioUrl)
+            }
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+                Log.d(TAG, "playStream: Started MusicService with ACTION_PLAY_STREAM for URL $audioUrl")
+            } catch (e: Exception) {
+                Log.e(TAG, "playStream: Error starting service for URL $audioUrl", e)
+            }
+        }
+    }
+
+    /**
      * LLAMADO DESDE JAVASCRIPT: Verifica el estado del reproductor.
      */
 

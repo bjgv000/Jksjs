@@ -14,6 +14,11 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer // O usar ExoPlayer para más funcionalidades
+// Importaciones para ExoPlayer (Media3)
+import androidx.media3.common.MediaItem
+import androidx.media3.common.AudioAttributes as Media3AudioAttributes
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.C
 import android.os.* // Para Handler, Looper, PowerManager, etc.
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
@@ -53,6 +58,21 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         const val EXTRA_ARTIST = "com.openmsucivibes.vibeturn.EXTRA_ARTIST"
         const val EXTRA_ARTWORK_URL = "com.openmsucivibes.vibeturn.EXTRA_ARTWORK_URL"
 
+        // New action and extra for streaming playback.
+        /**
+         * Acción para iniciar la reproducción de un flujo de audio directamente desde una URL.
+         * Este comando evita la interacción con la WebView y permite que Android controle
+         * la reproducción usando ExoPlayer. La URL del audio debe proporcionarse en el
+         * extra [EXTRA_STREAM_URL].
+         */
+        const val ACTION_PLAY_STREAM = "com.openmsucivibes.vibeturn.ACTION_PLAY_STREAM"
+
+        /**
+         * Extra que contiene la URL de la fuente de audio a reproducir cuando se
+         * invoca [ACTION_PLAY_STREAM].
+         */
+        const val EXTRA_STREAM_URL = "com.openmsucivibes.vibeturn.EXTRA_STREAM_URL"
+
         const val ACTION_UPDATE_STATUS_FROM_WEB = "com.openmsucivibes.vibeturn.ACTION_UPDATE_STATUS_FROM_WEB"
         const val EXTRA_IS_PLAYING = "com.openmsucivibes.vibeturn.EXTRA_IS_PLAYING"
 
@@ -70,6 +90,15 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var audioFocusGranted = false // Flag para saber si tenemos foco
     private var wakeLock: PowerManager.WakeLock? = null
+
+    // --- ExoPlayer ---
+    /**
+     * Instancia de ExoPlayer usada para reproducir flujos de audio por URL. Se inicializa
+     * en [onCreate] y se libera en [onDestroy]. Este reproductor reemplaza a
+     * [mediaPlayer] para el caso de streaming directo y maneja buffering y otros
+     * detalles automáticamente.
+     */
+    private var exoPlayer: ExoPlayer? = null
 
     // --- Información de la Canción Actual ---
     private var currentVideoId: String? = null
@@ -108,6 +137,22 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         setupWakeLock()
         currentPlaybackState = PlaybackStateCompat.STATE_NONE
         updateMediaSessionState(currentPlaybackState) // Asegura estado inicial
+
+        // Initialize ExoPlayer for streaming playback.
+        try {
+            val audioAttributes = Media3AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.CONTENT_TYPE_MUSIC)
+                .build()
+            exoPlayer = ExoPlayer.Builder(this).build().apply {
+                setAudioAttributes(audioAttributes, true)
+                setHandleAudioBecomingNoisy(true)
+            }
+            Log.i(TAG, "onCreate: ExoPlayer initialized successfully.")
+        } catch (e: Exception) {
+            Log.e(TAG, "onCreate: Failed to initialize ExoPlayer", e)
+            exoPlayer = null
+        }
         Log.i(TAG, "onCreate: Service created and configured successfully.")
     }
 
@@ -139,6 +184,7 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
             ACTION_PREVIOUS -> handleActionPrevious()       // SOLICITA Previous
             ACTION_STOP -> handleActionStop()               // DETIENE todo
             ACTION_UPDATE_PROGRESS -> handleActionUpdateProgress(intent)
+            ACTION_PLAY_STREAM -> handleActionPlayStream(intent) // Reproduce una URL directamente con ExoPlayer
             else -> {
                 Log.w(TAG, "onStartCommand: Unknown action received: '$action'")
                 releaseWakeLockIfNeeded() // Liberar si la acción es desconocida
@@ -158,6 +204,15 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         mediaPlayer?.release()
         mediaPlayer = null
         Log.d(TAG, "onDestroy: MediaPlayer released.")
+
+        // Release ExoPlayer resources
+        try {
+            exoPlayer?.release()
+            Log.i(TAG, "onDestroy: ExoPlayer released.")
+        } catch (e: Exception) {
+            Log.e(TAG, "onDestroy: Error releasing ExoPlayer", e)
+        }
+        exoPlayer = null
         abandonAudioFocus()
         mediaSession?.release()
         mediaSession = null
@@ -323,27 +378,6 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         Log.d(TAG, "handleActionRequestTogglePlayPause: Request sent. Waiting for JS confirmation.")
         // Mantenemos el WakeLock aquí porque esperamos una acción resultante.
         // acquireWakeLock() // Aseguramos tenerlo mientras esperamos respuesta? Podría ser útil.
-
-        // IMPORTANT: Cuando se inicia este servicio mediante PendingIntent.getForegroundService() en Android O+
-        // el sistema invoca startForegroundService(), lo que obliga a llamar a startForeground() en
-        // un plazo de 5 segundos para evitar que el sistema mate el servicio. Anteriormente sólo
-        // llamábamos a startForeground() tras recibir la confirmación de reproducción desde la Web (ACTION_PLAY).
-        // En Android 13 esto provoca que las acciones de notificación no respondan porque el sistema
-        // finaliza el servicio antes de que llegue esa confirmación.  Por lo tanto, elevamos
-        // inmediatamente el servicio a primer plano usando el estado de reproducción actual.  Esto
-        // garantiza que cumplimos con el requisito de 5 segundos y que las acciones funcionan desde
-        // Android 10 en adelante.
-        val preloadNotification = createNotification(currentPlaybackState, currentProgress)
-        if (preloadNotification != null) {
-            try {
-                startForeground(NOTIFICATION_ID, preloadNotification)
-            } catch (e: Exception) {
-                // Registrar el error pero continuar; startForeground puede fallar si el servicio ya
-                // está en primer plano con otra notificación. En ese caso simplemente notificamos.
-                Log.e(TAG, "handleActionRequestTogglePlayPause: Error starting foreground for preload notification", e)
-                NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, preloadNotification)
-            }
-        }
     }
 
     private fun handleActionNext() {
@@ -355,20 +389,6 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         updateMediaSessionState(currentPlaybackState) // Notificar al sistema
         // Mantener WakeLock esperando que la nueva canción llame a ACTION_PLAY
         Log.d(TAG, "handleActionNext: Request sent. Waiting for new song notification from WebView.")
-
-        // De la misma forma que en handleActionRequestTogglePlayPause, garantizar que
-        // el servicio pasa a primer plano inmediatamente cuando se invoca la acción
-        // mediante PendingIntent.getForegroundService(). De lo contrario, el sistema
-        // podría finalizar el servicio antes de recibir la confirmación de reproducción.
-        val nextNotification = createNotification(currentPlaybackState, currentProgress)
-        if (nextNotification != null) {
-            try {
-                startForeground(NOTIFICATION_ID, nextNotification)
-            } catch (e: Exception) {
-                Log.e(TAG, "handleActionNext: Error starting foreground for preload notification", e)
-                NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, nextNotification)
-            }
-        }
     }
 
     private fun handleActionPrevious() {
@@ -380,17 +400,76 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         updateMediaSessionState(currentPlaybackState) // Notificar al sistema
         // Mantener WakeLock esperando que la nueva canción llame a ACTION_PLAY
         Log.d(TAG, "handleActionPrevious: Request sent. Waiting for new song notification from WebView.")
+    }
 
-        // Igual que con las otras acciones, iniciar el servicio en primer plano
-        // inmediatamente para cumplir el requisito de startForegroundService() en Android O+.
-        val prevNotification = createNotification(currentPlaybackState, currentProgress)
-        if (prevNotification != null) {
-            try {
-                startForeground(NOTIFICATION_ID, prevNotification)
-            } catch (e: Exception) {
-                Log.e(TAG, "handleActionPrevious: Error starting foreground for preload notification", e)
-                NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, prevNotification)
+    /**
+     * Maneja la acción [ACTION_PLAY_STREAM] enviando una URL para reproducir. Esta función
+     * inicializa ExoPlayer con la URL proporcionada y comienza la reproducción en primer
+     * plano. A diferencia de [handleActionPlayConfirm], no interactúa con la WebView ni
+     * espera confirmación de JavaScript; todo se gestiona dentro del servicio.
+     *
+     * @param intent Intent que contiene la acción y el extra con la URL.
+     */
+    private fun handleActionPlayStream(intent: Intent?) {
+        Log.i(TAG, "handleActionPlayStream: Received request to play stream")
+        val url = intent?.getStringExtra(EXTRA_STREAM_URL)
+        if (url.isNullOrEmpty()) {
+            Log.e(TAG, "handleActionPlayStream: URL is null or empty. Ignoring.")
+            releaseWakeLockIfNeeded()
+            return
+        }
+        // Request audio focus if not already granted
+        if (!audioFocusGranted) {
+            Log.d(TAG, "handleActionPlayStream: Requesting audio focus for streaming...")
+            if (!requestAudioFocus()) {
+                Log.e(TAG, "handleActionPlayStream: Failed to gain audio focus. Aborting stream play.")
+                releaseWakeLockIfNeeded()
+                return
             }
+        }
+        // Acquire a wakelock to keep CPU awake during streaming
+        acquireWakeLock()
+
+        val player = exoPlayer ?: run {
+            // Attempt to create a new player if null
+            try {
+                val audioAttributes = Media3AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.CONTENT_TYPE_MUSIC)
+                    .build()
+                ExoPlayer.Builder(this).build().apply {
+                    setAudioAttributes(audioAttributes, true)
+                    setHandleAudioBecomingNoisy(true)
+                }.also { exoPlayer = it }
+            } catch (e: Exception) {
+                Log.e(TAG, "handleActionPlayStream: Failed to create ExoPlayer", e)
+                releaseWakeLockIfNeeded()
+                return
+            }
+        }
+
+        try {
+            // Build a media item from the provided URL
+            val mediaItem = MediaItem.fromUri(url)
+            Log.d(TAG, "handleActionPlayStream: Setting media item: $url")
+            player.setMediaItem(mediaItem)
+            player.prepare()
+            player.play()
+            Log.i(TAG, "handleActionPlayStream: Playback started for URL: $url")
+
+            // Update local metadata to reflect streaming state; you may customize the title/artist
+            currentTitle = "Reproduciendo audio"
+            currentArtist = url
+            currentDuration = 0
+            currentPlaybackState = PlaybackStateCompat.STATE_PLAYING
+            updateMediaSessionState(currentPlaybackState)
+            val notification = createNotification(currentPlaybackState, currentProgress)
+            if (notification != null) {
+                startForeground(NOTIFICATION_ID, notification)
+                Log.d(TAG, "handleActionPlayStream: Service moved to foreground with streaming notification.")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "handleActionPlayStream: Error while starting playback", e)
         }
     }
 
