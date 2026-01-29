@@ -323,6 +323,27 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         Log.d(TAG, "handleActionRequestTogglePlayPause: Request sent. Waiting for JS confirmation.")
         // Mantenemos el WakeLock aquí porque esperamos una acción resultante.
         // acquireWakeLock() // Aseguramos tenerlo mientras esperamos respuesta? Podría ser útil.
+
+        // IMPORTANT: Cuando se inicia este servicio mediante PendingIntent.getForegroundService() en Android O+
+        // el sistema invoca startForegroundService(), lo que obliga a llamar a startForeground() en
+        // un plazo de 5 segundos para evitar que el sistema mate el servicio. Anteriormente sólo
+        // llamábamos a startForeground() tras recibir la confirmación de reproducción desde la Web (ACTION_PLAY).
+        // En Android 13 esto provoca que las acciones de notificación no respondan porque el sistema
+        // finaliza el servicio antes de que llegue esa confirmación.  Por lo tanto, elevamos
+        // inmediatamente el servicio a primer plano usando el estado de reproducción actual.  Esto
+        // garantiza que cumplimos con el requisito de 5 segundos y que las acciones funcionan desde
+        // Android 10 en adelante.
+        val preloadNotification = createNotification(currentPlaybackState, currentProgress)
+        if (preloadNotification != null) {
+            try {
+                startForeground(NOTIFICATION_ID, preloadNotification)
+            } catch (e: Exception) {
+                // Registrar el error pero continuar; startForeground puede fallar si el servicio ya
+                // está en primer plano con otra notificación. En ese caso simplemente notificamos.
+                Log.e(TAG, "handleActionRequestTogglePlayPause: Error starting foreground for preload notification", e)
+                NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, preloadNotification)
+            }
+        }
     }
 
     private fun handleActionNext() {
@@ -334,6 +355,20 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         updateMediaSessionState(currentPlaybackState) // Notificar al sistema
         // Mantener WakeLock esperando que la nueva canción llame a ACTION_PLAY
         Log.d(TAG, "handleActionNext: Request sent. Waiting for new song notification from WebView.")
+
+        // De la misma forma que en handleActionRequestTogglePlayPause, garantizar que
+        // el servicio pasa a primer plano inmediatamente cuando se invoca la acción
+        // mediante PendingIntent.getForegroundService(). De lo contrario, el sistema
+        // podría finalizar el servicio antes de recibir la confirmación de reproducción.
+        val nextNotification = createNotification(currentPlaybackState, currentProgress)
+        if (nextNotification != null) {
+            try {
+                startForeground(NOTIFICATION_ID, nextNotification)
+            } catch (e: Exception) {
+                Log.e(TAG, "handleActionNext: Error starting foreground for preload notification", e)
+                NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, nextNotification)
+            }
+        }
     }
 
     private fun handleActionPrevious() {
@@ -345,6 +380,18 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         updateMediaSessionState(currentPlaybackState) // Notificar al sistema
         // Mantener WakeLock esperando que la nueva canción llame a ACTION_PLAY
         Log.d(TAG, "handleActionPrevious: Request sent. Waiting for new song notification from WebView.")
+
+        // Igual que con las otras acciones, iniciar el servicio en primer plano
+        // inmediatamente para cumplir el requisito de startForegroundService() en Android O+.
+        val prevNotification = createNotification(currentPlaybackState, currentProgress)
+        if (prevNotification != null) {
+            try {
+                startForeground(NOTIFICATION_ID, prevNotification)
+            } catch (e: Exception) {
+                Log.e(TAG, "handleActionPrevious: Error starting foreground for preload notification", e)
+                NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, prevNotification)
+            }
+        }
     }
 
     private fun handleActionUpdateProgress(intent: Intent?) {
