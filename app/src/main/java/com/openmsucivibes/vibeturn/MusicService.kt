@@ -433,9 +433,19 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     private fun createActionIntent(action: String, requestCode: Int): PendingIntent {
         val intent = Intent(this, MusicService::class.java).apply { this.action = action }
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        return PendingIntent.getService(this, requestCode, intent, flags)
-    }
+          val intent = Intent(this, MusicService::class.java).apply { this.action = action }
+        // Always set FLAG_IMMUTABLE for pending intents on API 23+ to satisfy Android 12+ security
+        // requirements. Also use FLAG_UPDATE_CURRENT so that multiple calls with the same
+        // requestCode update the existing pending intent rather than creating duplicates.
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // On API 26+ use getForegroundService so the OS will call startForegroundService
+            // instead of startService when the pending intent fires.
+            PendingIntent.getForegroundService(this, requestCode, intent, flags)
+        } else {
+            PendingIntent.getService(this, requestCode, intent, flags)
+        }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
