@@ -1,45 +1,13 @@
-package com.openmsucivibes.vibeturn // Asegúrate que el paquete sea el correcto
+package com.openmsucivibes.vibeturn
 
-import android.annotation.SuppressLint
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
-import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-// El reproductor nativo MediaPlayer se sustituye por ExoPlayer (Media3)
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
-import androidx.media3.common.C
-import androidx.media3.common.AudioAttributes as ExoAudioAttributes
-import android.net.Uri
-import android.os.* // Para Handler, Looper, PowerManager, etc.
+import android.os.IBinder
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
-import android.support.v4.media.MediaBrowserCompat
-import android.support.v4.media.MediaMetadataCompat
-import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
-import androidx.media.app.NotificationCompat
-import androidx.core.app.NotificationCompat as CoreNotificationCompat
-import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
-import androidx.media.app.NotificationCompat.MediaStyle
-import kotlinx.coroutines.* // Para Coroutines (descarga de artwork)
-import java.io.IOException
-import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
+import androidx.media.app.NotificationCompat as MediaNotificationCompat
 
 class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
